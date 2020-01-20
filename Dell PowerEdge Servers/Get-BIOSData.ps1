@@ -38,11 +38,9 @@ Begin{
     $TrustAll = $TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
     [System.Net.ServicePointManager]::CertificatePolicy = $TrustAll
 }
-
     Ignore-SSLCertificates
-    $Results = @()
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::TLS12
-    $credential = get-credential
+    $credential = get-credential -Message "iDRAC Login Credentials"
 }
 
 Process{
@@ -50,7 +48,9 @@ Process{
     $biosURI = "https://$server/redfish/v1/Systems/System.Embedded.1/Bios"
     $bios = Invoke-WebRequest -Uri $biosURI -Credential $credential -Contenttype "application/JSON" -ErrorAction:Stop
     $biosdata=$bios.Content | ConvertFrom-Json
-    $biosdata.Attributes
+    $attributes = $biosdata.Attributes
 }
 
-End{}
+End{
+    $attributes
+}
