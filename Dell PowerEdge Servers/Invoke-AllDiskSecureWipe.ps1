@@ -1,29 +1,43 @@
 <#
 .SYNOPSIS
-Wipes HDDs in Dell Poweredge servers with REDFISH enabled.
+    Wipes HDDs in Dell Poweredge servers with REDFISH enabled.
 .DESCRIPTION
-Uses REDFISH REST calls to get all disks in server, uses "Drive.SecureErase" to wipe each drive. Does not work on SSDs.
+    Uses REDFISH REST calls to get all disks in server, uses "Drive.SecureErase" to wipe each drive. Does not work on SSDs.
 .EXAMPLE
-Invoke-AllDiskSecureWipe -idrac_ip 8.8.8.8
+    Invoke-AllDiskSecureWipe -Username root -Password calvin -Server 10.0.0.1
+.EXAMPLE
+    Invoke-AllDiskSecureWipe -Username root -Password calvin -Server servernamehere
+.INPUTS
+    - Username (Must have at least read permissions on iDRAC)
+    - Password
+    - Server (Can be IP or DNS name of iDRAC)
+.OUTPUTS
+    Completed jobs
+.NOTES
+    Author - Joey Kleinsorge
 #>
 
 [CmdletBinding()]
 param (
-    [Parameter(Mandatory=$true)] $idrac_ip
-  )
+    [Parameter(Mandatory = $True)]
+    [string]$Username,
+    [Parameter(Mandatory = $True)]
+    [string]$Password,
+    [Parameter(Mandatory = $true)] 
+    [string]$server
+)
 
-Begin{
+Begin {
     #_Ignore-SSLCerts
-function Ignore-SSLCertificates
-{
-    $Provider = New-Object Microsoft.CSharp.CSharpCodeProvider
-    $Compiler = $Provider.CreateCompiler()
-    $Params = New-Object System.CodeDom.Compiler.CompilerParameters
-    $Params.GenerateExecutable = $false
-    $Params.GenerateInMemory = $true
-    $Params.IncludeDebugInformation = $false
-    $Params.ReferencedAssemblies.Add("System.DLL") > $null
-    $TASource=@'
+    function Ignore-SSLCertificates {
+        $Provider = New-Object Microsoft.CSharp.CSharpCodeProvider
+        $Compiler = $Provider.CreateCompiler()
+        $Params = New-Object System.CodeDom.Compiler.CompilerParameters
+        $Params.GenerateExecutable = $false
+        $Params.GenerateInMemory = $true
+        $Params.IncludeDebugInformation = $false
+        $Params.ReferencedAssemblies.Add("System.DLL") > $null
+        $TASource = @'
         namespace Local.ToolkitExtensions.Net.CertificatePolicy
         {
             public class TrustAll : System.Net.ICertificatePolicy
@@ -35,31 +49,33 @@ function Ignore-SSLCertificates
             }
         }
 '@ 
-    $TAResults=$Provider.CompileAssemblyFromSource($Params,$TASource)
-    $TAAssembly=$TAResults.CompiledAssembly
-    $TrustAll = $TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
-    [System.Net.ServicePointManager]::CertificatePolicy = $TrustAll
-}
+        $TAResults = $Provider.CompileAssemblyFromSource($Params, $TASource)
+        $TAAssembly = $TAResults.CompiledAssembly
+        $TrustAll = $TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
+        [System.Net.ServicePointManager]::CertificatePolicy = $TrustAll
+    }
 
     Ignore-SSLCertificates
 
-    #_Get Creds
-    $credential = Get-Credential -Message "idrac login credentials"
+    #_Convert credentials
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::TLS12
+    $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+    $credential = New-Object System.Management.Automation.PSCredential($Username, $SecurePassword)
 
     #_Create Array of jobids
     $jobs = @()
 }
-Process{
+Process {
     #_Get list of storage controllers
     $u = "https://$idrac_ip/redfish/v1/Systems/System.Embedded.1/Storage" 
-    $Response = Invoke-WebRequest -Uri $u -Credential $credential -Method Get -UseBasicParsing -Headers @{"Accept"="application/json"}
+    $Response = Invoke-WebRequest -Uri $u -Credential $credential -Method Get -UseBasicParsing -Headers @{"Accept" = "application/json" }
 
     #_Check response to API call
-    if ($Response.StatusCode -eq 200){
-        [String]::Format("`n- PASS, statuscode {0} returned successfully to get storage controller(s)",$Response.StatusCode)
+    if ($Response.StatusCode -eq 200) {
+        [String]::Format("`n- PASS, statuscode {0} returned successfully to get storage controller(s)", $Response.StatusCode)
     }
-    else{
-        [String]::Format("`n- FAIL, statuscode {0} returned",$Response.StatusCode)
+    else {
+        [String]::Format("`n- FAIL, statuscode {0} returned", $Response.StatusCode)
         return
     }
     $Data = $Response.Content | ConvertFrom-Json
@@ -69,35 +85,35 @@ Process{
     $raidcontroller = $listofcontrollers | select-string "RAID"
     $raidstring = out-string -InputObject $raidcontroller 
     [regex]$regex = '/[^}]*'
-    $raidcontrollerapi= $regex.Match($raidstring)
+    $raidcontrollerapi = $regex.Match($raidstring)
     $raidcontrollerapi = $raidcontrollerapi.Value
 
     #_Get list of drives attached to controller
-    $u = "https://$idrac_ip"+$raidcontrollerapi
-    $Response = Invoke-WebRequest -Uri $u -Credential $credential -Method Get -UseBasicParsing -Headers @{"Accept"="application/json"}
+    $u = "https://$idrac_ip" + $raidcontrollerapi
+    $Response = Invoke-WebRequest -Uri $u -Credential $credential -Method Get -UseBasicParsing -Headers @{"Accept" = "application/json" }
     $Data = $Response.Content | ConvertFrom-Json
     $Drives = $Data.Drives
 
     #_Secure Erase each drive
-    foreach ($Drive in $Drives){
+    foreach ($Drive in $Drives) {
         $DriveAPI = $Drive.'@odata.id'
         $u = "https://$idrac_ip$DriveAPI"
-        $Response = Invoke-WebRequest -Uri $u -Credential $credential -Method Get -UseBasicParsing -Headers @{"Accept"="application/json"}
+        $Response = Invoke-WebRequest -Uri $u -Credential $credential -Method Get -UseBasicParsing -Headers @{"Accept" = "application/json" }
         $Data = $Response.Content | ConvertFrom-Json
 
         #_If SSDs break
-        If ($Data.MediaType -eq "SSD"){
-        Write-Warning "$u is an SSD and cannot be wiped"
+        If ($Data.MediaType -eq "SSD") {
+            Write-Warning "$u is an SSD and cannot be wiped"
         }
 
         #_Secure Erase HDDs
-        Else{
+        Else {
             $u = "https://$idrac_ip$DriveAPI/Actions/Drive.SecureErase"
             Write-Host "Trying to erase $DriveAPI"
-            try{
-                $Response= Invoke-WebRequest -Uri $u -Credential $credential -Method Post -ContentType 'application/json' -ErrorVariable RespErr -Headers @{"Accept" = "application/json"}
+            try {
+                $Response = Invoke-WebRequest -Uri $u -Credential $credential -Method Post -ContentType 'application/json' -ErrorVariable RespErr -Headers @{"Accept" = "application/json" }
             }
-            catch{
+            catch {
                 Write-Host
                 $RespErr
                 return
@@ -116,9 +132,9 @@ Process{
             }
 
             #_Output job status
-            $u ="https://$idrac_ip/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/$job_id"
+            $u = "https://$idrac_ip/redfish/v1/Managers/iDRAC.Embedded.1/Jobs/$job_id"
             try {
-            $Response = Invoke-WebRequest -Uri $u -Credential $credential -Method Get -UseBasicParsing -ContentType 'application/json' -ErrorVariable RespErr -Headers @{"Accept" = "application/json"}
+                $Response = Invoke-WebRequest -Uri $u -Credential $credential -Method Get -UseBasicParsing -ContentType 'application/json' -ErrorVariable RespErr -Headers @{"Accept" = "application/json" }
             }
             catch {
                 Write-Host
@@ -129,7 +145,7 @@ Process{
         }
     }
 }
-End{
+End {
     Write-Verbose "The following jobs were completed:"
     $jobs
 }

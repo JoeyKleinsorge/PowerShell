@@ -1,27 +1,40 @@
 <#
 .SYNOPSIS
-Gets Dell server BIOS settings
+    Gets Dell server BIOS settings
 .DESCRIPTION
-Uses REDFISH REST call to to get BIOS data. 
+    Uses REDFISH REST call to to get BIOS data. 
 .EXAMPLE
-Get-BIOSData -server serveridracname
+    PS C:\> Get-BIOSData -server serveridracname
+.INPUTS
+    - Username (Must have at least read permissions on iDRAC)
+    - Password
+    - Server (Can be IP or DNS name of iDRAC)
+.OUTPUTS
+    Server information 
+.NOTES
+    Author - Joey Kleinsorge
 #>
 
 [CmdletBinding()]
 param (
-    [Parameter(Mandatory=$true)] $server
-  )
+    [Parameter(Mandatory = $True)]
+    [string]$Username,
+    [Parameter(Mandatory = $True)]
+    [string]$Password,
+    [Parameter(Mandatory = $true)] 
+    [string]$server
+)
 
-Begin{
-    function Ignore-SSLCertificates{
-    $Provider = New-Object Microsoft.CSharp.CSharpCodeProvider
-    $Compiler = $Provider.CreateCompiler()
-    $Params = New-Object System.CodeDom.Compiler.CompilerParameters
-    $Params.GenerateExecutable = $false
-    $Params.GenerateInMemory = $true
-    $Params.IncludeDebugInformation = $false
-    $Params.ReferencedAssemblies.Add("System.DLL") > $null
-    $TASource=@'
+Begin {
+    function Ignore-SSLCertificates {
+        $Provider = New-Object Microsoft.CSharp.CSharpCodeProvider
+        $Compiler = $Provider.CreateCompiler()
+        $Params = New-Object System.CodeDom.Compiler.CompilerParameters
+        $Params.GenerateExecutable = $false
+        $Params.GenerateInMemory = $true
+        $Params.IncludeDebugInformation = $false
+        $Params.ReferencedAssemblies.Add("System.DLL") > $null
+        $TASource = @'
         namespace Local.ToolkitExtensions.Net.CertificatePolicy
         {
             public class TrustAll : System.Net.ICertificatePolicy
@@ -33,24 +46,27 @@ Begin{
             }
         }
 '@ 
-    $TAResults=$Provider.CompileAssemblyFromSource($Params,$TASource)
-    $TAAssembly=$TAResults.CompiledAssembly
-    $TrustAll = $TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
-    [System.Net.ServicePointManager]::CertificatePolicy = $TrustAll
-}
+        $TAResults = $Provider.CompileAssemblyFromSource($Params, $TASource)
+        $TAAssembly = $TAResults.CompiledAssembly
+        $TrustAll = $TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
+        [System.Net.ServicePointManager]::CertificatePolicy = $TrustAll
+    }
     Ignore-SSLCertificates
+
+    #_Convert credentials
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::TLS12
-    $credential = get-credential -Message "iDRAC Login Credentials"
+    $SecurePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+    $credential = New-Object System.Management.Automation.PSCredential($Username, $SecurePassword)
 }
 
-Process{
+Process {
     write-host "BIOS Settings" -foregroundcolor "yellow"
     $biosURI = "https://$server/redfish/v1/Systems/System.Embedded.1/Bios"
     $bios = Invoke-WebRequest -Uri $biosURI -Credential $credential -Contenttype "application/JSON" -ErrorAction:Stop
-    $biosdata=$bios.Content | ConvertFrom-Json
+    $biosdata = $bios.Content | ConvertFrom-Json
     $attributes = $biosdata.Attributes
 }
 
-End{
+End {
     $attributes
 }
