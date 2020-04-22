@@ -53,13 +53,14 @@ Begin {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::TLS12
 
     #_Assign vars
+    $ReportId = "57508"
     $procs = 0
     $memory = 0
 }
 Process {
     #_Build request body
     $body = @{
-        "ReportDefId"   = "57508"
+        "ReportDefId"   = $ReportId
         "FilterGroupId" = 0
     }
     $body = $body | ConvertTo-Json
